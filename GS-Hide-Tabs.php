@@ -7,7 +7,7 @@ $thisfile = basename(__FILE__, ".php");
 register_plugin(
     $thisfile,
     'GS Hide Tabs',
-    '1.0',
+    '1.1',
     'CE Team',
     'https://www.getsimple-ce.ovh/',
     'Hide admin navigation tabs or sidebar elements per user.',
@@ -188,7 +188,7 @@ function gstabs_admin_page() {
 	<div class="w3-container w3-margin-bottom">
 		<label class="w3-text-blue">Add user: </label>
 		<br>
-			<select class="w3-select w3-border" style="width:30%" id="gstabs-user-select">
+			<select class="w3-select w3-border w3-round" style="width:30%" id="gstabs-user-select">
 				<option value="">  -- Select --</option>';
     foreach ($users as $u) {
         echo '
@@ -410,6 +410,7 @@ add_action('header','gstabs_output_css');
 
 function gstabs_output_css() {
     global $USR;
+	global $SITEURL;
     $data = gstabs_load();
     if (!isset($data['_raw'])) return;
     // parse raw rules to structured
@@ -417,7 +418,9 @@ function gstabs_output_css() {
     if (!isset($parsed[$USR])) return;
     $rules = $parsed[$USR];
     if (empty($rules)) return;
-
+	
+	echo '<link rel="stylesheet" href="' . $SITEURL . 'plugins/massiveAdmin/css/w3.css"/>';
+	
     echo "
 	<style>\n";
     foreach ($rules as $r) {
