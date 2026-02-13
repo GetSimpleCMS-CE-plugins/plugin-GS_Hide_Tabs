@@ -10,7 +10,7 @@ register_plugin(
 	'2.0',
 	'risingisland',
 	'https://getsimple-ce.ovh/donate',
-	'Hide admin navigation tabs or sidebar elements per user, or modify their CSS properties.',
+	'Hide admin navigation tabs and elements or modify their CSS properties per user.',
 	'settings',
 	'gstabs_admin_page'
 );
@@ -507,5 +507,6 @@ function gstabs_output_css() {
 	echo "
 	</style>\n";
 }
+
 
 ?>
