@@ -7,10 +7,10 @@ $thisfile = basename(__FILE__, ".php");
 register_plugin(
 	$thisfile,
 	'GS Hide Tabs',
-	'1.2',
-	'CE Team',
-	'https://www.getsimple-ce.ovh/',
-	'Hide admin navigation tabs or sidebar elements per user.',
+	'2.0',
+	'risingisland',
+	'https://getsimple-ce.ovh/donate',
+	'Hide admin navigation tabs or sidebar elements per user, or modify their CSS properties.',
 	'settings',
 	'gstabs_admin_page'
 );
@@ -45,7 +45,9 @@ function gstabs_save($data) {
 }
 
 # ----------------------------------------------------------
-#  GET EXISTING GETSIMPLE USERS
+#  GET EXISTING GETSIMPLE USERS WITH ACTUAL USERNAMES
+#  Reads the <USR> tag from XML files to get real usernames
+#  including special characters like info@domain.com
 # ----------------------------------------------------------
 function gstabs_get_users() {
 	$users = array();
@@ -54,8 +56,19 @@ function gstabs_get_users() {
 	if (!is_dir($dir)) return $users;
 
 	foreach (glob($dir.'*.xml') as $file) {
-		$name = basename($file, '.xml');
-		$users[] = $name;
+		// Try to read the actual username from XML
+		$xml_content = @file_get_contents($file);
+		if ($xml_content !== false) {
+			// Try to parse the <USR> tag
+			if (preg_match('/<USR>([^<]+)<\/USR>/', $xml_content, $matches)) {
+				$username = $matches[1];
+				$users[] = $username;
+			} else {
+				// Fallback to filename if XML parsing fails
+				$name = basename($file, '.xml');
+				$users[] = $name;
+			}
+		}
 	}
 
 	sort($users);
@@ -69,6 +82,10 @@ function gstabs_get_users() {
 #	class:delconfirm
 #	class:delconfirm within:#pages
 #	selector:#pages .delconfirm
+#	CSS modifications with {property:value}
+#	id:nav_pages {opacity:0.5}
+#	class:delconfirm {border:2px solid red; opacity:0.7}
+#	selector:#pages .delconfirm {background:yellow}
 # ----------------------------------------------------------
 function gstabs_parse_raw($raw) {
 	$out = array();
@@ -86,6 +103,17 @@ function gstabs_parse_raw($raw) {
 		$parts = array_map('trim', explode(',', $items_part));
 		foreach ($parts as $p) {
 			if ($p === '') continue;
+			
+			// Extract CSS modifications in {...}
+			$css_mods = '';
+			$action = 'hide'; // default action
+			if (preg_match('/\{([^}]+)\}/', $p, $matches)) {
+				$css_mods = trim($matches[1]);
+				$action = 'modify';
+				// Remove the {...} part from $p
+				$p = trim(preg_replace('/\{[^}]+\}/', '', $p));
+			}
+			
 			// parse within: if exists
 			$within = '';
 			if (stripos($p, ' within:') !== false) {
@@ -103,21 +131,21 @@ function gstabs_parse_raw($raw) {
 			if (stripos($p, 'id:') === 0) {
 				$value = trim(substr($p,3));
 				if ($value === '') continue;
-				$items[] = array('type'=>'id','value'=>$value,'within'=>$within);
+				$items[] = array('type'=>'id','value'=>$value,'within'=>$within,'action'=>$action,'css'=>$css_mods);
 			} elseif (stripos($p, 'class:') === 0) {
 				$value = trim(substr($p,6));
 				if ($value === '') continue;
-				$items[] = array('type'=>'class','value'=>$value,'within'=>$within);
+				$items[] = array('type'=>'class','value'=>$value,'within'=>$within,'action'=>$action,'css'=>$css_mods);
 			} elseif (stripos($p, 'selector:') === 0) {
 				$value = trim(substr($p,9));
 				if ($value === '') continue;
-				$items[] = array('type'=>'selector','value'=>$value,'within'=>$within);
+				$items[] = array('type'=>'selector','value'=>$value,'within'=>$within,'action'=>$action,'css'=>$css_mods);
 			} else {
 				// fallback: treat as id if it matches id name, else selector
 				if (preg_match('/^[A-Za-z0-9\-_]+$/', $p)) {
-					$items[] = array('type'=>'id','value'=>$p,'within'=>$within);
+					$items[] = array('type'=>'id','value'=>$p,'within'=>$within,'action'=>$action,'css'=>$css_mods);
 				} else {
-					$items[] = array('type'=>'selector','value'=>$p,'within'=>$within);
+					$items[] = array('type'=>'selector','value'=>$p,'within'=>$within,'action'=>$action,'css'=>$css_mods);
 				}
 			}
 		}
@@ -146,7 +174,12 @@ function gstabs_admin_page() {
 		$store['_raw'] = $input;
 		gstabs_save($store);
 		echo '
-<div class="updated">Settings saved.</div>';
+<div class="updated">Settings saved. Redirecting in 3 seconds...</div>
+<script>
+	setTimeout(function() {
+		window.location.href = window.location.href;
+	}, 3000);
+</script>';
 		$saved_raw = $input;
 	}
 
@@ -156,14 +189,16 @@ function gstabs_admin_page() {
 	// Admin page HTML
 	echo '
 	<link rel="stylesheet" href="'.$SITEURL.'plugins/UpdateCE/assets/w3.css">
-	<link rel="stylesheet" href="'.$SITEURL.'plugins/UpdateCE/assets/w3-custom.css">
 	<style>
-		textarea {color: #0000CD!important; font-size:14px!important; border-radius:5px!important; background:#E6E6E6; border:solid 1px #999!important;}
 		.w3-tiny {padding: 3px 7px; border-radius: 5px;}
 		.w3-parent code {font-size: .85em;}
-		.w3-border {border: 1px solid #999 !important;}
-		.cke {margin:5px 0 0 15px}
+		textarea {color: #0000CD!important; font-size:14px!important; border-radius:5px!important; background:#E6E6E6; border:solid 1px #999!important;}
+		#gstabs-helper {margin:20px 10px; padding:20px 20px 0 20px; border:solid #B3B3B3 1px; border-radius:5px;}
+		.cke {margin:5px 0 0 15px;}
 		.wrapper p {line-height: 1.3em;}
+		.example-box {background: #f0f8ff; padding: 10px; border-left: 3px solid #2196F3; margin: 10px 0;}
+		.donateButton{ background:orange;padding: 10px; border-radius:5px;}
+		.donateButton:hover{ background:darkorange;}
 	</style>';
 	
 	echo '
@@ -171,113 +206,126 @@ function gstabs_admin_page() {
 	<header class="w3-container w3-border-bottom w3-margin-bottom">
 		<h3>GS Hide Tabs 
 		<svg xmlns="http://www.w3.org/2000/svg" style="vertical-align:middle;" width="1.2em" height="1.2em" viewBox="0 0 24 24"><rect width="24" height="24" fill="none"/><path fill="#000" d="M6.75 3A4.75 4.75 0 0 0 2 7.75v7A2.25 2.25 0 0 0 4.25 17h.25V8.75A3.25 3.25 0 0 1 7.75 5.5H19v-.25A2.25 2.25 0 0 0 16.75 3zm12.504 3.5h.496a2.25 2.25 0 0 1 2.245 2.096L22 8.75v1.004a.75.75 0 0 1-1.493.101l-.007-.101V8.75a.75.75 0 0 0-.648-.743L19.75 8h-.496a.75.75 0 0 1-.102-1.493zm-13.004 5a.75.75 0 0 1 .743.649l.007.102v2.494a.75.75 0 0 1-1.493.102l-.007-.102v-2.494a.75.75 0 0 1 .75-.75m.743 5.643a.75.75 0 0 0-1.493.102v1.005l.005.154A2.25 2.25 0 0 0 7.75 20.5h.5l.102-.007A.75.75 0 0 0 8.25 19h-.5l-.102-.007A.75.75 0 0 1 7 18.25v-1.005zM22 17.246a.75.75 0 1 0-1.5 0v1.005a.75.75 0 0 1-.75.75h-1.003a.75.75 0 0 0 0 1.5h1.003A2.25 2.25 0 0 0 22 18.25zM14.753 19h1.495a.75.75 0 0 1 .102 1.493l-.102.007h-1.495a.75.75 0 0 1-.102-1.493zm-2.507 0h-1.495l-.102.007a.75.75 0 0 0 .102 1.493h1.495l.102-.007A.75.75 0 0 0 12.246 19m9.747-6.851a.75.75 0 0 0-1.493.102v2.494l.007.102A.75.75 0 0 0 22 14.745v-2.494zM9.503 7.25a.75.75 0 0 0-.75-.75H7.75A2.25 2.25 0 0 0 5.5 8.75v1.004a.75.75 0 0 0 1.5 0V8.75A.75.75 0 0 1 7.75 8h1.003a.75.75 0 0 0 .75-.75m5.746-.75h1.503a.75.75 0 0 1 .102 1.493L16.752 8h-1.503a.75.75 0 0 1-.102-1.493zm-2.504 0H11.25l-.102.007A.75.75 0 0 0 11.25 8h1.495l.102-.007a.75.75 0 0 0-.102-1.493"/></svg></h3>
-		<p>Define which navigation tabs, sidebar elements or selectors to hide per user.</p>
-		<p><b>Rule format</b> (one user per line):</p>
-		
-		<pre class="cke">username1: id:nav_theme, id:nav_plugins, class:delconfirm within:#pages, selector:#pages .delconfirm</pre>
-		<pre class="cke">username2: id:nav_upload, id:sb_newpage, id:sb_menumanager</pre>
-		<br>
-		<p><b>Supported prefixes</b>: 
-			<code class="tpl">id:</code>, 
-			<code class="tpl">class:</code>, 
-			<code class="tpl">selector:</code>, 
-			<code class="tpl">within:</code>. <br>
-			<b>Within</b>: Use <code class="tpl">within:#pages</code> to scope a class selector to that parent (useful when the same class appears in different admin tabs).<br>
-			<b>Selectors</b>: If you need very specific selectors use selector: and supply CSS directly <br>
-			(e.g. <code class="tpl">selector: #load #sidebar li:nth-child(5)</code> or <code class="tpl">selector:#sidebar a[href*="massiveAdmin&whitelabel"]</code>).
-		</p><br>
+		<p>Define which navigation tabs, sidebar elements or selectors to hide or modify, per user.</p>
 	</header>
-	';
-
-	// User dropdown
-	echo '
-	<div class="w3-container w3-margin-bottom">
-		<label class="w3-text-blue">Add user: </label>
-		<br>
-			<select class="w3-select w3-border w3-round" style="width:30%" id="gstabs-user-select">
-				<option value="">  -- Select --</option>';
+	
+	<div class="w3-container">
+		<p><strong>Select User:</strong></p>
+		<select id="gstabs-user-select" class="w3-select w3-border w3-round" style="max-width:300px">
+			<option value="">-- Select User --</option>';
 	foreach ($users as $u) {
-		echo '
-				<option value="'.htmlspecialchars($u).'">'.htmlspecialchars($u).'</option>';
+		echo '<option value="' . htmlspecialchars($u) . '">' . htmlspecialchars($u) . '</option>';
 	}
 	echo '
-			</select>
-			<button type="button" class="w3-btn w3-round w3-blue" id="gstabs-insert-user">Insert</button>
-		</div>
-	';
-
-	// Helper table (collapsible)
-	echo '
-	<div class="w3-container w3-margin-bottom">
-		<button class="w3-btn w3-small w3-round w3-orange" id="gstabs-toggle-helper">Toggle Helper Table</button>
-		<div id="gstabs-helper" style="display:none; margin-top:10px;">
-			<table class="w3-table w3-striped w3-small" style="max-width:900px;">
-				<tr>
-					<th>Name</th>
-					<th>Example</th>
-					<th></th>
+		</select>
+		
+		<button id="gstabs-insert-user" class="w3-btn w3-blue w3-round">Insert User Template</button>
+		
+	</div>
+	
+	<div class="w3-container w3-margin-top">
+		<button id="gstabs-toggle-helper" class="w3-btn w3-teal w3-round">Show/Hide Help</button>
+		
+		<div id="gstabs-helper">
+			<p style="margin-top:10px; font-size:0.9em; color:#666;">
+				<strong>Note:</strong> The dropdown shows actual usernames (including special characters like info@domain.com). 
+				Use these exact usernames in your rules.
+			</p>
+			<p><b>Rule format</b> (one user per line):</p>
+			
+			<div class="example-box">
+				<p><strong>To HIDE elements:</strong></p>
+				<pre class="cke">username1: id:nav_theme, id:nav_plugins, class:delconfirm</pre>
+				<pre class="cke">username2: id:nav_upload, id:sb_newpage, id:sb_menumanager</pre>
+			</div>
+			
+			<div class="example-box">
+				<p><strong>To MODIFY elements with CSS:</strong></p>
+				<pre class="cke">username3: id:nav_upload {opacity:0.5}, class:delconfirm {border:2px solid red}</pre>
+				<pre class="cke">username4: id:sb_newpage {opacity:0.3; pointer-events:none}</pre>
+			</div>
+			
+			<br>
+			<p><b>Supported prefixes</b>: 
+				<code class="tpl">id:</code>, 
+				<code class="tpl">class:</code>, 
+				<code class="tpl">selector:</code>, 
+				<code class="tpl">within:</code>
+			</p><p>	
+				<b>Within</b>: Use <code class="tpl">within:#pages</code> to scope a class selector to that parent (useful when the same class appears in different admin tabs).<br>
+				<b>Selectors</b>: If you need very specific selectors use selector: and supply CSS directly <br>
+				(e.g. <code class="tpl">selector: #load #sidebar li:nth-child(5)</code> or <code class="tpl">selector:#sidebar a[href*="massiveAdmin&whitelabel"]</code>).
+			</p>
+			<p><b>CSS Modification</b>: Add <code class="tpl">{property:value}</code> or <code class="tpl">{property:value; property2:value2}</code> after any selector to modify instead of hide.</p>
+			<p><b>Common CSS Examples</b>:</p>
+			<ul>
+				<li><code class="tpl">{opacity:0.5}</code> - Make semi-transparent</li>
+				<li><code class="tpl">{border:2px solid red}</code> - Add red border</li>
+				<li><code class="tpl">{background:yellow}</code> - Yellow background</li>
+				<li><code class="tpl">{pointer-events:none; opacity:0.3}</code> - Disable and fade</li>
+				<li><code class="tpl">{filter:grayscale(100%)}</code> - Make grayscale</li>
+				<li><code class="tpl">{transform:scale(0.8)}</code> - Shrink to 80%</li>
+			</ul>
+		
+			<table class="w3-table-all w3-hoverable">
+				<tr class="w3-blue">
+					<th>Element</th>
+					<th>Rule to HIDE</th>
+					<th>Example to MODIFY</th>
+					<th>Actions</th>
 				</tr>
 				<tr>
-					<td>Main Pages tab</td>
-					<td><code>id:nav_pages</code></td>
-					<td>
-						<button class="w3-btn w3-tiny w3-round w3-blue" onclick="gstabsInsertTextAtCaret(\'id:nav_pages\')">Add</button>
-					</td>
-				</tr>
-				<tr>
-					<td>Files / Upload tab</td>
-					<td><code>id:nav_upload</code></td>
-					<td>
-						<button class="w3-btn w3-tiny w3-round w3-blue" onclick="gstabsInsertTextAtCaret(\'id:nav_upload\')">Add</button>
-					</td>
-				</tr>
-				<tr>
-					<td>Theme tab</td>
+					<td>Theme Tab</td>
 					<td><code>id:nav_theme</code></td>
+					<td><code>id:nav_theme {opacity:0.5}</code></td>
 					<td>
-						<button class="w3-btn w3-tiny w3-round w3-blue" onclick="gstabsInsertTextAtCaret(\'id:nav_theme\')">Add</button>
+						<button class="w3-btn w3-tiny w3-round w3-blue" onclick="gstabsInsertTextAtCaret(\'id:nav_theme\')">Hide</button>
+						<button class="w3-btn w3-tiny w3-round w3-green" onclick="gstabsInsertTextAtCaret(\'id:nav_theme {opacity:0.5}\')">Fade</button>
 					</td>
 				</tr>
 				<tr>
-					<td>Plugins tab</td>
+					<td>Plugins Tab</td>
 					<td><code>id:nav_plugins</code></td>
+					<td><code>id:nav_plugins {border:2px dashed orange}</code></td>
 					<td>
-						<button class="w3-btn w3-tiny w3-round w3-blue" onclick="gstabsInsertTextAtCaret(\'id:nav_plugins\')">Add</button>
+						<button class="w3-btn w3-tiny w3-round w3-blue" onclick="gstabsInsertTextAtCaret(\'id:nav_plugins\')">Hide</button>
+						<button class="w3-btn w3-tiny w3-round w3-green" onclick="gstabsInsertTextAtCaret(\'id:nav_plugins {border:2px dashed orange}\')">Border</button>
 					</td>
 				</tr>
 				<tr>
-					<td>Backups tab</td>
-					<td><code>id:nav_backups</code></td>
+					<td>Upload Tab</td>
+					<td><code>id:nav_upload</code></td>
+					<td><code>id:nav_upload {filter:grayscale(100%)}</code></td>
 					<td>
-						<button class="w3-btn w3-tiny w3-round w3-blue" onclick="gstabsInsertTextAtCaret(\'id:nav_backups\')">Add</button>
+						<button class="w3-btn w3-tiny w3-round w3-blue" onclick="gstabsInsertTextAtCaret(\'id:nav_upload\')">Hide</button>
+						<button class="w3-btn w3-tiny w3-round w3-green" onclick="gstabsInsertTextAtCaret(\'id:nav_upload {filter:grayscale(100%)}\')">Grayscale</button>
 					</td>
 				</tr>
 				<tr>
-					<td>Sidebar New Page</td>
+					<td>Support Tab</td>
+					<td><code>id:nav_support</code></td>
+					<td><code>id:nav_support {background:#ffcccc}</code></td>
+					<td>
+						<button class="w3-btn w3-tiny w3-round w3-blue" onclick="gstabsInsertTextAtCaret(\'id:nav_support\')">Hide</button>
+						<button class="w3-btn w3-tiny w3-round w3-green" onclick="gstabsInsertTextAtCaret(\'id:nav_support {background:#ffcccc}\')">Highlight</button>
+					</td>
+				</tr>
+				<tr>
+					<td>New Page Button</td>
 					<td><code>id:sb_newpage</code></td>
+					<td><code>id:sb_newpage {pointer-events:none; opacity:0.3}</code></td>
 					<td>
-						<button class="w3-btn w3-tiny w3-round w3-blue" onclick="gstabsInsertTextAtCaret(\'id:sb_newpage\')">Add</button>
+						<button class="w3-btn w3-tiny w3-round w3-blue" onclick="gstabsInsertTextAtCaret(\'id:sb_newpage\')">Hide</button>
+						<button class="w3-btn w3-tiny w3-round w3-green" onclick="gstabsInsertTextAtCaret(\'id:sb_newpage {pointer-events:none; opacity:0.3}\')">Disable</button>
 					</td>
 				</tr>
 				<tr>
-					<td>Sidebar Components</td>
-					<td><code>class:compmassive</code></td>
-					<td>
-						<button class="w3-btn w3-tiny w3-round w3-blue" onclick="gstabsInsertTextAtCaret(\'class:compmassive\')">Add</button>
-					</td>
-				</tr>
-				<tr>
-					<td>Delete confirmation buttons</td>
+					<td>Delete Buttons</td>
 					<td><code>class:delconfirm</code></td>
+					<td><code>class:delconfirm {border:3px solid red; opacity:0.6}</code></td>
 					<td>
-						<button class="w3-btn w3-tiny w3-round w3-blue" onclick="gstabsInsertTextAtCaret(\'class:delconfirm\')">Add</button>
-					</td>
-				</tr>
-				<tr>
-					<td>Meta window in page editor</td>
-					<td><code>id:metadata_window</code></td>
-					<td>
-						<button class="w3-btn w3-tiny w3-round w3-blue" onclick="gstabsInsertTextAtCaret(\'id:metadata_window\')">Add</button>
+						<button class="w3-btn w3-tiny w3-round w3-blue" onclick="gstabsInsertTextAtCaret(\'class:delconfirm\')">Hide</button>
+						<button class="w3-btn w3-tiny w3-round w3-green" onclick="gstabsInsertTextAtCaret(\'class:delconfirm {border:3px solid red; opacity:0.6}\')">Warning</button>
 					</td>
 				</tr>
 			</table>
@@ -292,7 +340,7 @@ function gstabs_admin_page() {
 			<p>
 				<input type="submit" class="w3-btn w3-round w3-green" name="gstabs-save" value="Save Settings">
 				</p>
-			</form><br>
+			</form>
 	';
 
 	// Footer
@@ -312,7 +360,10 @@ function gstabs_admin_page() {
 	// JS: helper toggle, insert user, insert helper buttons
 	echo '
 	<script>
-	// helper toggle
+	// helper toggle - start hidden
+	var helperEl = document.getElementById("gstabs-helper");
+	helperEl.style.display = "none";
+	
 	document.getElementById("gstabs-toggle-helper").addEventListener("click", function(){
 		var el = document.getElementById("gstabs-helper");
 		el.style.display = (el.style.display === "none") ? "block" : "none";
@@ -358,7 +409,7 @@ function gstabs_admin_page() {
 		var sel = document.getElementById("gstabs-user-select").value;
 		if (sel) {
 			// try to find "sel:" line
-			var re = new RegExp("^" + sel + "\\s*:\\s*(.*)$","m");
+			var re = new RegExp("^" + sel + "\\\\s*:\\\\s*(.*)$","m");
 			var m = ta.value.match(re);
 			if (m) {
 				// replace line by appending the item (comma separated)
@@ -384,6 +435,7 @@ function gstabs_admin_page() {
 
 # ----------------------------------------------------------
 #  APPLY CSS IN ADMIN PANEL (from parsed rules)
+#  Now supports both hiding AND modifying elements
 # ----------------------------------------------------------
 add_action('header','gstabs_output_css');
 
@@ -407,30 +459,48 @@ function gstabs_output_css() {
 		$type = $r['type'];
 		$value = $r['value'];
 		$within = isset($r['within']) ? trim($r['within']) : '';
+		$action = isset($r['action']) ? $r['action'] : 'hide';
+		$css = isset($r['css']) ? $r['css'] : '';
 
-		// sanitize simple id/class names to avoid injection where possible
+		// Determine CSS to apply
+		$css_properties = '';
+		if ($action === 'hide') {
+			$css_properties = 'display:none !important;';
+		} elseif ($action === 'modify' && !empty($css)) {
+			// Sanitize CSS - remove any potentially dangerous content
+			$css = preg_replace('/[<>]/', '', $css);
+			// Ensure it ends with semicolon
+			if (substr(trim($css), -1) !== ';') {
+				$css .= ';';
+			}
+			$css_properties = $css;
+		}
+
+		if (empty($css_properties)) continue;
+
+		// Build selector and output CSS
 		if ($type === "id") {
 			// allow only safe id characters
 			$safe = preg_replace('/[^A-Za-z0-9\-_]/', '', $value);
 			if ($within) {
-				echo $within . " #" . $safe . " { display:none !important; }\n";
+				echo $within . " #" . $safe . " { " . $css_properties . " }\n";
 			} else {
-				echo "#" . $safe . " { display:none !important; }\n";
+				echo "#" . $safe . " { " . $css_properties . " }\n";
 			}
 		} elseif ($type === "class") {
 			$safe = preg_replace('/[^A-Za-z0-9\-_]/', '', $value);
 			if ($within) {
-				echo $within . " ." . $safe . " { display:none !important; }\n";
+				echo $within . " ." . $safe . " { " . $css_properties . " }\n";
 			} else {
-				echo "." . $safe . " { display:none !important; }\n";
+				echo "." . $safe . " { " . $css_properties . " }\n";
 			}
 		} elseif ($type === "selector") {
 			// allow selector through but strip dangerous characters like < >
 			$safe_selector = preg_replace('/[<>]/', '', $value);
 			if ($within) {
-				echo $within . " " . $safe_selector . " { display:none !important; }\n";
+				echo $within . " " . $safe_selector . " { " . $css_properties . " }\n";
 			} else {
-				echo $safe_selector . " { display:none !important; }\n";
+				echo $safe_selector . " { " . $css_properties . " }\n";
 			}
 		}
 	}
