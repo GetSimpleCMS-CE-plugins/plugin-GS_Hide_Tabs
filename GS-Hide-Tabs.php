@@ -353,7 +353,7 @@ function gstabs_admin_page() {
 				<tr>
 					<td>File Manager (real block)</td>
 					<td><code>page:file-manager.php</code></td>
-					<td><em>prevent url navigation to *.php with 404</em></td>
+					<td><em>prevent url navigation to *.php with 403</em></td>
 					<td>
 						<button class="w3-btn w3-tiny w3-round w3-red" onclick="gstabsInsertTextAtCaret(\'page:file-manager.php\')">Block</button>
 					</td>
