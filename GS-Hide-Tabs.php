@@ -7,7 +7,7 @@ $thisfile = basename(__FILE__, ".php");
 register_plugin(
 	$thisfile,
 	'GS Hide Tabs',
-	'2.0',
+	'3.0',
 	'risingisland',
 	'https://getsimple-ce.ovh/donate',
 	'Hide admin navigation tabs and elements or modify their CSS properties per user.',
@@ -140,6 +140,14 @@ function gstabs_parse_raw($raw) {
 				$value = trim(substr($p,9));
 				if ($value === '') continue;
 				$items[] = array('type'=>'selector','value'=>$value,'within'=>$within,'action'=>$action,'css'=>$css_mods);
+			} elseif (stripos($p, 'page:') === 0) {
+				// server-side access block, e.g. page:pages.php or page:settings.php?tab=seo
+				$value = trim(substr($p,5));
+				if ($value === '') continue;
+				// allow filename + simple query string chars only
+				$value = preg_replace('/[^A-Za-z0-9\-_\.\?\=\&]/', '', $value);
+				if ($value === '') continue;
+				$items[] = array('type'=>'page','value'=>$value,'within'=>'','action'=>'block','css'=>'');
 			} else {
 				// fallback: treat as id if it matches id name, else selector
 				if (preg_match('/^[A-Za-z0-9\-_]+$/', $p)) {
@@ -245,11 +253,25 @@ function gstabs_admin_page() {
 				<pre class="cke">username4: id:sb_newpage {opacity:0.3; pointer-events:none}</pre>
 			</div>
 			
+			<div class="example-box" style="background:#fff3f0; border-left-color:#e53935;">
+				<p><strong>To actually BLOCK access (not just hide the link):</strong></p>
+				<pre class="cke">username5: page:pages.php, page:file-manager.php</pre>
+				<pre class="cke">username6: page:settings.php?tab=seo</pre>
+				<p style="margin:6px 0 0; font-size:0.85em; color:#666;">
+					<code class="tpl">page:</code> rules deny the admin script server-side, even if the user
+					knows or bookmarks the direct URL. Hiding a tab with <code class="tpl">id:</code>/<code class="tpl">class:</code>
+					only hides the link - it does not stop direct access. Use <code class="tpl">page:</code> for anything
+					that actually needs to be off-limits. Optionally add a query string
+					(<code class="tpl">?tab=seo</code>) to block only that sub-section of a file that hosts multiple tabs.
+				</p>
+			</div>
+
 			<br>
 			<p><b>Supported prefixes</b>: 
 				<code class="tpl">id:</code>, 
 				<code class="tpl">class:</code>, 
 				<code class="tpl">selector:</code>, 
+				<code class="tpl">page:</code>,
 				<code class="tpl">within:</code>
 			</p><p>	
 				<b>Within</b>: Use <code class="tpl">within:#pages</code> to scope a class selector to that parent (useful when the same class appears in different admin tabs).<br>
@@ -326,6 +348,14 @@ function gstabs_admin_page() {
 					<td>
 						<button class="w3-btn w3-tiny w3-round w3-blue" onclick="gstabsInsertTextAtCaret(\'class:delconfirm\')">Hide</button>
 						<button class="w3-btn w3-tiny w3-round w3-green" onclick="gstabsInsertTextAtCaret(\'class:delconfirm {border:3px solid red; opacity:0.6}\')">Warning</button>
+					</td>
+				</tr>
+				<tr>
+					<td>File Manager (real block)</td>
+					<td><code>page:file-manager.php</code></td>
+					<td><em>prevent url navigation to *.php with 404</em></td>
+					<td>
+						<button class="w3-btn w3-tiny w3-round w3-red" onclick="gstabsInsertTextAtCaret(\'page:file-manager.php\')">Block</button>
 					</td>
 				</tr>
 			</table>
@@ -508,5 +538,88 @@ function gstabs_output_css() {
 	</style>\n";
 }
 
+# ----------------------------------------------------------
+#  SERVER-SIDE ACCESS BLOCKING (real security, not just CSS)
+#  Rules of type "page:filename.php" (optionally with a query
+#  string, e.g. "page:settings.php?tab=seo") deny direct access
+#  to that admin script for the matched user, regardless of
+#  whether its nav link/tab is visible.
+#
+#  This runs at plugin load time (not via a later hook) because
+#  GetSimple admin pages include('inc/common.php') - which loads
+#  plugins - as the very first step, before the page itself
+#  processes any GET/POST logic. That means this check fires
+#  before the target page has a chance to do anything.
+# ----------------------------------------------------------
+function gstabs_get_blocked_pages($user) {
+	$data = gstabs_load();
+	if (!isset($data['_raw'])) return array();
+	$parsed = gstabs_parse_raw($data['_raw']);
+	if (!isset($parsed[$user])) return array();
+
+	$blocked = array();
+	foreach ($parsed[$user] as $r) {
+		if (isset($r['type']) && $r['type'] === 'page' && isset($r['value']) && $r['value'] !== '') {
+			$blocked[] = $r['value'];
+		}
+	}
+	return $blocked;
+}
+
+function gstabs_deny_access() {
+	if (!headers_sent()) {
+		http_response_code(403);
+	}
+	die('<!DOCTYPE html><html><head><meta charset="utf-8"><title>Access Denied</title>
+	<style>body{font-family:sans-serif;text-align:center;padding:80px;color:#333;}
+	a{color:#2271b1;}</style></head><body>
+	<h1>403 &middot; Access Denied</h1>
+	<p>You do not have permission to view this page.</p>
+	<p><a href="index.php">Return to Dashboard</a></p>
+	</body></html>');
+}
+
+function gstabs_enforce_page_block() {
+	global $USR;
+
+	// nothing to enforce before login (also avoids running on install/login screens)
+	if (empty($USR)) return;
+
+	$blocked = gstabs_get_blocked_pages($USR);
+	if (empty($blocked)) return;
+
+	$current_file = basename(parse_url($_SERVER['SCRIPT_NAME'], PHP_URL_PATH));
+
+	foreach ($blocked as $rule) {
+		$parts = explode('?', $rule, 2);
+		$rule_file  = strtolower($parts[0]);
+		$rule_query = isset($parts[1]) ? $parts[1] : '';
+
+		if (strtolower($current_file) !== $rule_file) continue;
+
+		if ($rule_query === '') {
+			// whole file is blocked, no query string required
+			gstabs_deny_access();
+		}
+
+		// query-scoped block, e.g. settings.php?tab=seo -
+		// all specified params must match the current request
+		parse_str($rule_query, $required);
+		$match = true;
+		foreach ($required as $k => $v) {
+			if (!isset($_GET[$k]) || $_GET[$k] !== $v) {
+				$match = false;
+				break;
+			}
+		}
+		if ($match) {
+			gstabs_deny_access();
+		}
+	}
+}
+
+// run immediately - do not wrap in add_action, must fire before
+// the current admin page's own logic runs
+gstabs_enforce_page_block();
 
 ?>
